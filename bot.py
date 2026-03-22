@@ -210,7 +210,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def webhook_handler(request):
     data = await request.json()
-    update = Update.de_json(data, request.app["bot"])
+    update = Update.de_json(data, request.app["ptb"].bot)
     await request.app["ptb"].process_update(update)
     return web.Response(text="ok")
 
@@ -220,19 +220,17 @@ async def health(request):
 async def on_startup(app):
     ptb = app["ptb"]
     await ptb.initialize()
-    await ptb.start()
     await ptb.bot.set_webhook(app["webhook_url"]+"/webhook")
-    logging.info("Bot started, webhook set")
+    logging.info("Webhook set OK - bot ready")
 
 async def on_cleanup(app):
-    await app["ptb"].stop()
     await app["ptb"].shutdown()
 
 def main():
     BOT_TOKEN = os.environ["BOT_TOKEN"]
     WEBHOOK_URL = os.environ["WEBHOOK_URL"]
     PORT = int(os.environ.get("PORT", 10000))
-    logging.info("PORT="+str(PORT))
+    logging.info("Starting on port "+str(PORT))
 
     ptb = Application.builder().token(BOT_TOKEN).build()
     conv = ConversationHandler(
@@ -252,7 +250,6 @@ def main():
 
     app = web.Application()
     app["ptb"] = ptb
-    app["bot"] = ptb.bot
     app["webhook_url"] = WEBHOOK_URL
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
@@ -260,7 +257,6 @@ def main():
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
 
-    logging.info("Starting web server on port "+str(PORT))
     web.run_app(app, host="0.0.0.0", port=PORT)
 
 if __name__ == "__main__":
