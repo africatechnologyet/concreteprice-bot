@@ -57,107 +57,102 @@ def calc_sale_price(grade, unit_costs, margin=None):
             "margin": margin, "sale_price": sale_price, "profit": sale_price - prod_cost}
 
 def fmt_price_summary(grade, r):
-    lines = [f"📊 *{grade} Concrete — Price Summary*\n",
-             f"{'Production Cost:':<22} ETB {r['prod_cost']:>10,.2f}",
-             f"{'Margin:':<22} {r['margin']*100:.1f}%",
-             f"{'Sale Price:':<22} ETB {r['sale_price']:>10,.2f}",
-             f"{'Profit:':<22} ETB {r['profit']:>10,.2f}"]
-    return "```\n" + "\n".join(lines) + "\n```"
+    lines = [
+        "Production Cost:       ETB " + f"{r['prod_cost']:>10,.2f}",
+        "Margin:                " + f"{r['margin']*100:.1f}%",
+        "Sale Price:            ETB " + f"{r['sale_price']:>10,.2f}",
+        "Profit:                ETB " + f"{r['profit']:>10,.2f}",
+    ]
+    return f"*{grade} Concrete - Price Summary*\n```\n" + "\n".join(lines) + "\n```"
 
 def fmt_full_breakdown(grade, r):
     bd = r["breakdown"]
-    lines = [f"📋 *{grade} — Full Cost Breakdown*\n", "```",
-             f"{'Item':<14} {'Qty':>8} {'Rate':>8} {'Cost (ETB)':>12}", "─" * 46]
+    lines = [f"{'Item':<14} {'Qty':>8} {'Rate':>8} {'Cost':>12}", "-" * 46]
     for mat in MIX_QTY:
         d = bd[mat]
         lines.append(f"{mat:<14} {d['qty']:>8.2f} {d['unit_cost']:>8.2f} {d['cost']:>12,.2f}")
-    lines.append("─" * 46)
+    lines.append("-" * 46)
     for item in FIXED_COSTS:
-        lines.append(f"{item:<14} {'—':>8} {'—':>8} {bd[item]['cost']:>12,.2f}")
-    lines += ["─" * 46,
+        lines.append(f"{item:<14} {'':>8} {'':>8} {bd[item]['cost']:>12,.2f}")
+    lines += ["-" * 46,
               f"{'Prod. Cost':<32} {r['prod_cost']:>12,.2f}",
               f"{'Margin':<32} {r['margin']*100:>11.1f}%",
-              f"{'Sale Price':<32} {r['sale_price']:>12,.2f}", "```"]
-    return "\n".join(lines)
+              f"{'Sale Price':<32} {r['sale_price']:>12,.2f}"]
+    return f"*{grade} - Full Cost Breakdown*\n```\n" + "\n".join(lines) + "\n```"
 
 def fmt_all_margins(grade, unit_costs):
     _, prod_cost = calc_production_cost(grade, unit_costs)
-    lines = [f"📈 *{grade} — Prices at Different Margins*\n", "```",
-             f"{'Margin':<10} {'Sale Price (ETB)':>18} {'Profit (ETB)':>14}", "─" * 44]
+    lines = [f"{'Margin':<10} {'Sale Price':>18} {'Profit':>14}", "-" * 44]
     for m in [0.10, 0.11, 0.12, 0.13]:
         sp = prod_cost * (1 + m)
-        tag = " ◀ default" if m == DEFAULT_MARGINS[grade] else ""
+        tag = " <-- default" if m == DEFAULT_MARGINS[grade] else ""
         lines.append(f"{m*100:.0f}%{'':<7} {sp:>18,.2f} {sp-prod_cost:>14,.2f}{tag}")
-    lines.append("```")
-    return "\n".join(lines)
+    return f"*{grade} - Prices at Different Margins*\n```\n" + "\n".join(lines) + "\n```"
 
 (MAIN_MENU, SELECT_GRADE, GRADE_ACTION,
  ENTER_CUSTOM_MARGIN, SELECT_COST_MATERIAL, ENTER_COST_VALUE) = range(6)
 
 def main_menu_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("💰 Get Sale Price", callback_data="menu_price")],
-        [InlineKeyboardButton("⚙️ Update Unit Costs", callback_data="menu_costs")],
-        [InlineKeyboardButton("📊 All Margins Table", callback_data="menu_margins")],
-        [InlineKeyboardButton("🔄 Reset Unit Costs", callback_data="menu_reset")],
+        [InlineKeyboardButton("Get Sale Price", callback_data="menu_price")],
+        [InlineKeyboardButton("Update Unit Costs", callback_data="menu_costs")],
+        [InlineKeyboardButton("All Margins Table", callback_data="menu_margins")],
+        [InlineKeyboardButton("Reset Unit Costs", callback_data="menu_reset")],
     ])
 
 def grade_keyboard(pfx):
     rows, row = [], []
     for g in GRADES:
-        row.append(InlineKeyboardButton(g, callback_data=f"{pfx}_{g}"))
+        row.append(InlineKeyboardButton(g, callback_data=pfx + "_" + g))
         if len(row) == 4: rows.append(row); row = []
     if row: rows.append(row)
-    rows.append([InlineKeyboardButton("🏠 Main Menu", callback_data="goto_main")])
+    rows.append([InlineKeyboardButton("Main Menu", callback_data="goto_main")])
     return InlineKeyboardMarkup(rows)
 
 def grade_action_keyboard(grade):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 Price Summary", callback_data=f"summary_{grade}")],
-        [InlineKeyboardButton("📋 Full Breakdown", callback_data=f"breakdown_{grade}")],
-        [InlineKeyboardButton("✏️ Custom Margin", callback_data=f"custom_{grade}")],
-        [InlineKeyboardButton("← Back", callback_data="menu_price"),
-         InlineKeyboardButton("🏠 Main Menu", callback_data="goto_main")],
+        [InlineKeyboardButton("Price Summary", callback_data="summary_" + grade)],
+        [InlineKeyboardButton("Full Breakdown", callback_data="breakdown_" + grade)],
+        [InlineKeyboardButton("Custom Margin", callback_data="custom_" + grade)],
+        [InlineKeyboardButton("Back", callback_data="menu_price"),
+         InlineKeyboardButton("Main Menu", callback_data="goto_main")],
     ])
 
 def material_keyboard():
-    rows = [[InlineKeyboardButton(m, callback_data=f"setcost_{m}")] for m in DEFAULT_UNIT_COSTS]
-    rows.append([InlineKeyboardButton("🏠 Main Menu", callback_data="goto_main")])
+    rows = [[InlineKeyboardButton(m, callback_data="setcost_" + m)] for m in DEFAULT_UNIT_COSTS]
+    rows.append([InlineKeyboardButton("Main Menu", callback_data="goto_main")])
     return InlineKeyboardMarkup(rows)
 
 def get_uc(context): return context.user_data.get("unit_costs", dict(DEFAULT_UNIT_COSTS))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    text = ("🏗️ *Concrete Sales Price Calculator*\n\n"
-            "Welcome! I calculate sale prices for concrete grades C5–C60.\n"
-            "All prices are in *ETB per m³*.\n\nWhat would you like to do?")
+    text = "Concrete Sales Price Calculator\n\nWelcome! I calculate sale prices for concrete grades C5-C60.\nAll prices are in ETB per m3.\n\nWhat would you like to do?"
     if update.message:
-        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_menu_keyboard())
+        await update.message.reply_text(text, reply_markup=main_menu_keyboard())
     else:
-        await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=main_menu_keyboard())
+        await update.callback_query.edit_message_text(text, reply_markup=main_menu_keyboard())
     return MAIN_MENU
 
 async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer(); d = q.data
     if d == "menu_price":
-        await q.edit_message_text("📦 *Select a concrete grade:*", parse_mode="Markdown", reply_markup=grade_keyboard("price"))
+        await q.edit_message_text("Select a concrete grade:", reply_markup=grade_keyboard("price"))
         return SELECT_GRADE
     elif d == "menu_margins":
-        await q.edit_message_text("📦 *Select a grade for margin options:*", parse_mode="Markdown", reply_markup=grade_keyboard("margins"))
+        await q.edit_message_text("Select a grade for margin options:", reply_markup=grade_keyboard("margins"))
         return SELECT_GRADE
     elif d == "menu_costs":
         uc = get_uc(context)
-        lines = ["⚙️ *Current Unit Costs (ETB)*\n", "```"]
+        lines = ["Current Unit Costs (ETB)\n"]
         for mat, cost in uc.items():
-            lines.append(f"{mat:<14} {cost:>8.2f}" + (" ✏️" if cost != DEFAULT_UNIT_COSTS[mat] else ""))
-        lines.append("```\nSelect a material to update:")
-        await q.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=material_keyboard())
+            lines.append(mat + ": " + str(cost))
+        lines.append("\nSelect a material to update:")
+        await q.edit_message_text("\n".join(lines), reply_markup=material_keyboard())
         return SELECT_COST_MATERIAL
     elif d == "menu_reset":
         context.user_data["unit_costs"] = dict(DEFAULT_UNIT_COSTS)
-        await q.edit_message_text("✅ Unit costs *reset* to original values.\n\nWhat would you like to do?",
-                                  parse_mode="Markdown", reply_markup=main_menu_keyboard())
+        await q.edit_message_text("Unit costs reset to original values.\n\nWhat would you like to do?", reply_markup=main_menu_keyboard())
         return MAIN_MENU
     elif d == "goto_main":
         return await start(update, context)
@@ -167,40 +162,37 @@ async def select_grade_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if d == "goto_main": return await start(update, context)
     if d.startswith("price_"):
         grade = d.split("_", 1)[1]; context.user_data["selected_grade"] = grade
-        await q.edit_message_text(f"*{grade} — What would you like?*", parse_mode="Markdown", reply_markup=grade_action_keyboard(grade))
+        await q.edit_message_text(grade + " - What would you like?", reply_markup=grade_action_keyboard(grade))
         return GRADE_ACTION
     elif d.startswith("margins_"):
         grade = d.split("_", 1)[1]
-        await q.edit_message_text(fmt_all_margins(grade, get_uc(context)), parse_mode="Markdown",
+        await q.edit_message_text(fmt_all_margins(grade, get_uc(context)),
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("← Back", callback_data="menu_margins"),
-                InlineKeyboardButton("🏠 Main Menu", callback_data="goto_main")]]))
+                InlineKeyboardButton("Back", callback_data="menu_margins"),
+                InlineKeyboardButton("Main Menu", callback_data="goto_main")]]))
         return SELECT_GRADE
     elif d in ("menu_price", "menu_margins"):
         pfx = "price" if d == "menu_price" else "margins"
-        await q.edit_message_text("📦 *Select a concrete grade:*", parse_mode="Markdown", reply_markup=grade_keyboard(pfx))
+        await q.edit_message_text("Select a concrete grade:", reply_markup=grade_keyboard(pfx))
         return SELECT_GRADE
 
 async def grade_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer(); d = q.data; uc = get_uc(context)
     if d == "goto_main": return await start(update, context)
     if d == "menu_price":
-        await q.edit_message_text("📦 *Select a concrete grade:*", parse_mode="Markdown", reply_markup=grade_keyboard("price"))
+        await q.edit_message_text("Select a concrete grade:", reply_markup=grade_keyboard("price"))
         return SELECT_GRADE
     if d.startswith("summary_"):
         grade = d.split("_", 1)[1]
-        await q.edit_message_text(fmt_price_summary(grade, calc_sale_price(grade, uc)),
-                                  parse_mode="Markdown", reply_markup=grade_action_keyboard(grade))
+        await q.edit_message_text(fmt_price_summary(grade, calc_sale_price(grade, uc)), reply_markup=grade_action_keyboard(grade))
         return GRADE_ACTION
     elif d.startswith("breakdown_"):
         grade = d.split("_", 1)[1]
-        await q.edit_message_text(fmt_full_breakdown(grade, calc_sale_price(grade, uc)),
-                                  parse_mode="Markdown", reply_markup=grade_action_keyboard(grade))
+        await q.edit_message_text(fmt_full_breakdown(grade, calc_sale_price(grade, uc)), reply_markup=grade_action_keyboard(grade))
         return GRADE_ACTION
     elif d.startswith("custom_"):
         grade = d.split("_", 1)[1]; context.user_data["selected_grade"] = grade
-        await q.edit_message_text(f"✏️ Enter a custom margin % for *{grade}*\nExample: type `12` for 12%",
-                                  parse_mode="Markdown")
+        await q.edit_message_text("Enter a custom margin % for " + grade + "\nExample: type 12 for 12%")
         return ENTER_CUSTOM_MARGIN
 
 async def enter_custom_margin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -209,10 +201,9 @@ async def enter_custom_margin(update: Update, context: ContextTypes.DEFAULT_TYPE
         margin = float(update.message.text.strip().replace("%", "")) / 100
         if not (0 < margin < 2): raise ValueError
     except ValueError:
-        await update.message.reply_text("❌ Please enter a valid number between 1 and 100.")
+        await update.message.reply_text("Please enter a valid number between 1 and 100.")
         return ENTER_CUSTOM_MARGIN
-    await update.message.reply_text(fmt_price_summary(grade, calc_sale_price(grade, get_uc(context), margin)),
-                                    parse_mode="Markdown", reply_markup=grade_action_keyboard(grade))
+    await update.message.reply_text(fmt_price_summary(grade, calc_sale_price(grade, get_uc(context), margin)), reply_markup=grade_action_keyboard(grade))
     return GRADE_ACTION
 
 async def select_cost_material(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -221,8 +212,7 @@ async def select_cost_material(update: Update, context: ContextTypes.DEFAULT_TYP
     if d.startswith("setcost_"):
         material = d[len("setcost_"):]; context.user_data["editing_material"] = material
         current = get_uc(context)[material]
-        await q.edit_message_text(f"✏️ *{material}*\nCurrent: ETB {current:.2f}/kg\n\nEnter new unit cost in ETB:",
-                                  parse_mode="Markdown")
+        await q.edit_message_text(material + "\nCurrent: ETB " + str(current) + "/kg\n\nEnter new unit cost in ETB:")
         return ENTER_COST_VALUE
 
 async def enter_cost_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -231,12 +221,11 @@ async def enter_cost_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_cost = float(update.message.text.strip())
         if new_cost < 0: raise ValueError
     except ValueError:
-        await update.message.reply_text("❌ Please enter a valid positive number.")
+        await update.message.reply_text("Please enter a valid positive number.")
         return ENTER_COST_VALUE
     uc = get_uc(context); old = uc[material]; uc[material] = new_cost
     context.user_data["unit_costs"] = uc
-    await update.message.reply_text(f"✅ *{material}* updated\nETB {old:.2f} → ETB {new_cost:.2f}\n\nWhat next?",
-                                    parse_mode="Markdown", reply_markup=main_menu_keyboard())
+    await update.message.reply_text(material + " updated\nETB " + str(old) + " to ETB " + str(new_cost) + "\n\nWhat next?", reply_markup=main_menu_keyboard())
     return MAIN_MENU
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -258,6 +247,8 @@ async def main():
     WEBHOOK_URL = os.environ["WEBHOOK_URL"]
     PORT = int(os.environ.get("PORT", 10000))
 
+    logging.info("Starting bot on port " + str(PORT))
+
     ptb_app = Application.builder().token(BOT_TOKEN).build()
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
@@ -276,19 +267,20 @@ async def main():
 
     await ptb_app.initialize()
     await ptb_app.start()
-    await ptb_app.bot.set_webhook(f"{WEBHOOK_URL}/webhook")
-    logging.info("✅ Webhook set and bot started")
+    await ptb_app.bot.set_webhook(WEBHOOK_URL + "/webhook")
+    logging.info("Webhook set to " + WEBHOOK_URL + "/webhook")
 
-    app = web.Application()
-    app["ptb_app"] = ptb_app
-    app.router.add_post("/webhook", webhook_handler)
-    app.router.add_get("/", health)
+    aio_app = web.Application()
+    aio_app["ptb_app"] = ptb_app
+    aio_app.router.add_post("/webhook", webhook_handler)
+    aio_app.router.add_get("/", health)
+    aio_app.router.add_get("/health", health)
 
-    runner = web.AppRunner(app)
+    runner = web.AppRunner(aio_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    logging.info(f"✅ Server listening on port {PORT}")
+    logging.info("Server listening on port " + str(PORT))
 
     await asyncio.Event().wait()
 
