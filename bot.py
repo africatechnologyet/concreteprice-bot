@@ -1,4 +1,5 @@
 import os, asyncio, logging
+from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -44,15 +45,12 @@ def calc_production_cost(grade, unit_costs):
     idx = grade_index(grade)
     breakdown, mat_total = {}, 0
     for mat, qty_list in MIX_QTY.items():
-        qty = qty_list[idx]
-        cost = qty * unit_costs[mat]
+        qty = qty_list[idx]; cost = qty * unit_costs[mat]
         breakdown[mat] = {"qty": qty, "unit_cost": unit_costs[mat], "cost": cost}
         mat_total += cost
     fixed_total = 0
     for item, cost_list in FIXED_COSTS.items():
-        cost = cost_list[idx]
-        breakdown[item] = {"cost": cost}
-        fixed_total += cost
+        cost = cost_list[idx]; breakdown[item] = {"cost": cost}; fixed_total += cost
     return breakdown, mat_total + fixed_total
 
 def calc_sale_price(grade, unit_costs, margin=None):
@@ -249,13 +247,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Cancelled. Type /start to begin again.")
     return ConversationHandler.END
 
-async def main():
+def build_app():
     BOT_TOKEN = os.environ["BOT_TOKEN"]
-    WEBHOOK_URL = os.environ["WEBHOOK_URL"]
-    PORT = int(os.environ.get("PORT", 8443))
-
-    app = Application.builder().token(BOT_TOKEN).build()
-
+    ptb_app = Application.builder().token(BOT_TOKEN).build()
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -269,27 +263,44 @@ async def main():
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
         per_message=False,
     )
-    app.add_handler(conv)
+    ptb_app.add_handler(conv)
+    return ptb_app
 
-    await app.bot.set_webhook(f"{WEBHOOK_URL}/webhook")
-    await app.initialize()
-    await app.start()
+async def webhook_handler(request):
+    ptb_app = request.app["ptb_app"]
+    data = await request.json()
+    update = Update.de_json(data, ptb_app.bot)
+    await ptb_app.process_update(update)
+    return web.Response(text="ok")
 
-    from aiohttp import web
-    async def handle(request):
-        data = await request.json()
-        update = Update.de_json(data, app.bot)
-        await app.process_update(update)
-        return web.Response(text="ok")
+async def health(request):
+    return web.Response(text="ok")
 
-    server = web.Application()
-    server.router.add_post("/webhook", handle)
-    runner = web.AppRunner(server)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-    print(f"✅ Bot running on port {PORT}")
-    await asyncio.Event().wait()
+async def on_startup(app):
+    ptb_app = app["ptb_app"]
+    WEBHOOK_URL = os.environ["WEBHOOK_URL"]
+    await ptb_app.initialize()
+    await ptb_app.start()
+    await ptb_app.bot.set_webhook(f"{WEBHOOK_URL}/webhook")
+    logging.info("Webhook set and bot started")
+
+async def on_cleanup(app):
+    ptb_app = app["ptb_app"]
+    await ptb_app.stop()
+    await ptb_app.shutdown()
+
+def main():
+    PORT = int(os.environ.get("PORT", 8443))
+    ptb_app = build_app()
+
+    app = web.Application()
+    app["ptb_app"] = ptb_app
+    app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
+    app.router.add_post("/webhook", webhook_handler)
+    app.router.add_get("/", health)
+
+    web.run_app(app, host="0.0.0.0", port=PORT)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
