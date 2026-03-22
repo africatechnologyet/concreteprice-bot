@@ -1,12 +1,11 @@
 import os, asyncio, logging, math
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ConversationHandler, ContextTypes, filters
 logging.basicConfig(level=logging.INFO)
 GRADES=["C5","C10","C15","C20","C25","C30","C35","C40","C45","C50","C60"]
 DEFAULT_UNIT_COSTS={"Cement":16.08,"Sand":3.15,"Gravel 00":2.47,"Gravel 01":1.89,"Gravel 02":2.40,"Water":0.50,"Chemicals":102.00}
 DEFAULT_FIXED={"Labor":160.0,"Overhead":160.0,"Reject 2.5%":264.0,"Truck":400.0}
 MIX_QTY={"Cement":[190,270,265,280,300,320,350,390,460,500,560],"Sand":[341,500,432.1,432,700,665,723,700,655,610,590],"Gravel 00":[341,530,432.1,432,310,245,188,200,235,200,210],"Gravel 01":[494,300,190.16,190,335,330,351,320,301,310,320],"Gravel 02":[741,700,846,760,635,670,652,645,645,640,640],"Water":[120,150,150,115,140,145,157,145,150,150,150],"Chemicals":[1.54,1.54,1.54,1.54,6.0,6.4,7.0,8.2,9.2,10.0,11.2]}
-FIXED_COSTS_PER_GRADE={"Labor":[160,160,160,160,200,147,160,200,200,200,200],"Overhead":[160,160,160,160,200,147,160,200,200,200,200],"Reject 2.5%":[264,264,264,264,264,264,264,264,264,264,264],"Truck":[400,400,400,400,400,400,400,400,400,400,400]}
 DEFAULT_MARGINS={"C5":0.13,"C10":0.13,"C15":0.10,"C20":0.13,"C25":0.13,"C30":0.13,"C35":0.13,"C40":0.11,"C45":0.13,"C50":0.13,"C60":0.13}
 TRUCK_CAPACITY=10
 FUEL_CONSUMPTION=1
@@ -17,6 +16,11 @@ def get_uc(ctx):
 def get_fc(ctx):
     if "fixed_costs" not in ctx.user_data: ctx.user_data["fixed_costs"]=dict(DEFAULT_FIXED)
     return ctx.user_data["fixed_costs"]
+def num_kb():
+    return ReplyKeyboardMarkup(
+        [["1","2","3"],["4","5","6"],["7","8","9"],[".",  "0","⌫"]],
+        resize_keyboard=True, one_time_keyboard=False, input_field_placeholder="Enter number...")
+def remove_kb(): return ReplyKeyboardRemove()
 def calc_material_cost(grade,uc):
     idx=grade_index(grade);bd,total={},0
     for m,ql in MIX_QTY.items():
@@ -114,60 +118,68 @@ async def select_grades_handler(update,context):
 async def ask_volume(update,context):
     if update.callback_query:
         q=update.callback_query;await q.answer()
-        if q.data=="goto_main": return await start(update,context)
+        if q.data=="goto_main":
+            await q.message.reply_text("🏢 *COBUILT READY MIX Price Calculator*\n\nAll prices in *ETB per m³*",parse_mode="Markdown",reply_markup=remove_kb())
+            return await start(update,context)
         return ASK_VOLUME
     try:
         vol=float(update.message.text.strip())
         if vol<=0: raise ValueError
-    except ValueError: await update.message.reply_text("❌ Please enter a valid positive number for volume (m³).",reply_markup=step_kb(show_back=False));return ASK_VOLUME
+    except ValueError: await update.message.reply_text("❌ Please enter a valid positive number for volume (m³).",reply_markup=num_kb());return ASK_VOLUME
     context.user_data["volume"]=vol;trucks=math.ceil(vol/TRUCK_CAPACITY)
-    await update.message.reply_text(f"✅ Volume: *{vol} m³*  →  *{trucks} trucks* needed\n\n*Step 2 of 4* — Pump Cost\n\nEnter the *total* pump cost for\nthe entire project (ETB):\n\n_Example: 15000_",parse_mode="Markdown",reply_markup=step_kb());return ASK_PUMP
+    await update.message.reply_text(f"✅ Volume: *{vol} m³*  →  *{trucks} trucks* needed\n\n*Step 2 of 4* — Pump Cost\n\nEnter the *total* pump cost for\nthe entire project (ETB):\n\n_Example: 15000_",parse_mode="Markdown",reply_markup=num_kb());return ASK_PUMP
 async def ask_pump(update,context):
     if update.callback_query:
         q=update.callback_query;await q.answer()
-        if q.data=="goto_main": return await start(update,context)
+        if q.data=="goto_main":
+            await q.message.reply_text("Returning...",reply_markup=remove_kb())
+            return await start(update,context)
         if q.data=="step_back":
             selected=context.user_data.get("selected_grades",[])
-            await q.edit_message_text(f"✅ Selected: *{', '.join(selected)}*\n\n*Step 1 of 4* — Total Volume\n\nEnter the total volume of concrete\nfor this project in m³:\n\n_Example: 50_",parse_mode="Markdown",reply_markup=step_kb(show_back=False));return ASK_VOLUME
+            await q.message.reply_text(f"✅ Selected: *{', '.join(selected)}*\n\n*Step 1 of 4* — Total Volume\n\nEnter the total volume of concrete\nfor this project in m³:\n\n_Example: 50_",parse_mode="Markdown",reply_markup=num_kb());return ASK_VOLUME
         return ASK_PUMP
     try:
         pump=float(update.message.text.strip())
         if pump<0: raise ValueError
-    except ValueError: await update.message.reply_text("❌ Please enter a valid number for pump cost (ETB).",reply_markup=step_kb());return ASK_PUMP
+    except ValueError: await update.message.reply_text("❌ Please enter a valid number for pump cost (ETB).",reply_markup=num_kb());return ASK_PUMP
     context.user_data["pump"]=pump;vol=context.user_data["volume"]
-    await update.message.reply_text(f"✅ Pump Cost: *ETB {pump:,.2f}*  →  *ETB {pump/vol:,.2f}/m³*\n\n*Step 3 of 4* — Project Distance\n\nEnter the distance from plant\nto project site in km:\n\n_Example: 25_",parse_mode="Markdown",reply_markup=step_kb());return ASK_DISTANCE
+    await update.message.reply_text(f"✅ Pump Cost: *ETB {pump:,.2f}*  →  *ETB {pump/vol:,.2f}/m³*\n\n*Step 3 of 4* — Project Distance\n\nEnter the distance from plant\nto project site in km:\n\n_Example: 25_",parse_mode="Markdown",reply_markup=num_kb());return ASK_DISTANCE
 async def ask_distance(update,context):
     if update.callback_query:
         q=update.callback_query;await q.answer()
-        if q.data=="goto_main": return await start(update,context)
+        if q.data=="goto_main":
+            await q.message.reply_text("Returning...",reply_markup=remove_kb())
+            return await start(update,context)
         if q.data=="step_back":
             vol=context.user_data.get("volume","");trucks=math.ceil(vol/TRUCK_CAPACITY) if vol else "?"
-            await q.edit_message_text(f"✅ Volume: *{vol} m³*  →  *{trucks} trucks* needed\n\n*Step 2 of 4* — Pump Cost\n\nEnter the *total* pump cost for\nthe entire project (ETB):\n\n_Example: 15000_",parse_mode="Markdown",reply_markup=step_kb());return ASK_PUMP
+            await q.message.reply_text(f"✅ Volume: *{vol} m³*  →  *{trucks} trucks* needed\n\n*Step 2 of 4* — Pump Cost\n\nEnter the *total* pump cost for\nthe entire project (ETB):\n\n_Example: 15000_",parse_mode="Markdown",reply_markup=num_kb());return ASK_PUMP
         return ASK_DISTANCE
     try:
         dist=float(update.message.text.strip())
         if dist<=0: raise ValueError
-    except ValueError: await update.message.reply_text("❌ Please enter a valid positive number for distance (km).",reply_markup=step_kb());return ASK_DISTANCE
+    except ValueError: await update.message.reply_text("❌ Please enter a valid positive number for distance (km).",reply_markup=num_kb());return ASK_DISTANCE
     context.user_data["distance"]=dist;trucks=math.ceil(context.user_data["volume"]/TRUCK_CAPACITY)
-    await update.message.reply_text(f"✅ Distance: *{dist} km*\n   {trucks} trucks × {dist} km = *{trucks*dist:.0f} liters*\n\n*Step 4 of 4* — Fuel Price\n\nEnter the current fuel price\nper liter (ETB):\n\n_Example: 92.5_",parse_mode="Markdown",reply_markup=step_kb());return ASK_FUEL_PRICE
+    await update.message.reply_text(f"✅ Distance: *{dist} km*\n   {trucks} trucks × {dist} km = *{trucks*dist:.0f} liters*\n\n*Step 4 of 4* — Fuel Price\n\nEnter the current fuel price\nper liter (ETB):\n\n_Example: 92.5_",parse_mode="Markdown",reply_markup=num_kb());return ASK_FUEL_PRICE
 async def ask_fuel_price(update,context):
     if update.callback_query:
         q=update.callback_query;await q.answer()
-        if q.data=="goto_main": return await start(update,context)
+        if q.data=="goto_main":
+            await q.message.reply_text("Returning...",reply_markup=remove_kb())
+            return await start(update,context)
         if q.data=="step_back":
             vol=context.user_data.get("volume","")
-            await q.edit_message_text(f"✅ Volume: *{vol} m³*\n\n*Step 3 of 4* — Project Distance\n\nEnter the distance from plant\nto project site in km:\n\n_Example: 25_",parse_mode="Markdown",reply_markup=step_kb());return ASK_DISTANCE
+            await q.message.reply_text(f"✅ Volume: *{vol} m³*\n\n*Step 3 of 4* — Project Distance\n\nEnter the distance from plant\nto project site in km:\n\n_Example: 25_",parse_mode="Markdown",reply_markup=num_kb());return ASK_DISTANCE
         return ASK_FUEL_PRICE
     try:
         fuel_price=float(update.message.text.strip())
         if fuel_price<=0: raise ValueError
-    except ValueError: await update.message.reply_text("❌ Please enter a valid positive number for fuel price (ETB/L).",reply_markup=step_kb());return ASK_FUEL_PRICE
+    except ValueError: await update.message.reply_text("❌ Please enter a valid positive number for fuel price (ETB/L).",reply_markup=num_kb());return ASK_FUEL_PRICE
     grades=context.user_data["selected_grades"];vol=context.user_data["volume"];pump=context.user_data["pump"];dist=context.user_data["distance"]
     uc=get_uc(context);fc=get_fc(context);transport=calc_transport(vol,pump,dist,fuel_price)
     results=[(g,calc_sale_price(g,uc,fc,transport)) for g in grades]
     context.user_data["results"]=results;context.user_data["result_idx"]=0
     t=transport
-    await update.message.reply_text(f"✅ Fuel: *ETB {fuel_price}/L*\n   {t['trucks']} trucks × {dist} km = *{t['total_liters']:.0f} L*  →  *ETB {t['fuel_total']:,.2f}*\n\n⏳ Calculating {len(grades)} grade(s)...",parse_mode="Markdown")
+    await update.message.reply_text(f"✅ Fuel: *ETB {fuel_price}/L*\n   {t['trucks']} trucks × {dist} km = *{t['total_liters']:.0f} L*  →  *ETB {t['fuel_total']:,.2f}*\n\n⏳ Calculating {len(grades)} grade(s)...",parse_mode="Markdown",reply_markup=remove_kb())
     grade,r=results[0];total=len(results);header=f"📊 *Result 1 of {total}*\n\n" if total>1 else ""
     await update.message.reply_text(header+fmt_summary(grade,r),parse_mode="Markdown",reply_markup=result_kb(0,total));return SHOW_RESULT
 async def show_result_handler(update,context):
@@ -207,26 +219,29 @@ async def select_material_handler(update,context):
         uc=get_uc(context);fc=get_fc(context)
         current=uc.get(mat) if mat in uc else fc.get(mat)
         default=DEFAULT_UNIT_COSTS.get(mat) if mat in DEFAULT_UNIT_COSTS else DEFAULT_FIXED.get(mat)
-        await q.edit_message_text(f"⚙️  *Update: {mat}*\n\nDefault value : *ETB {default:.2f}*\nCurrent value : *ETB {current:.2f}*\n\nEnter the new cost in ETB:",parse_mode="Markdown",reply_markup=back_to_costs_kb());return ENTER_COST
+        await q.message.reply_text(f"⚙️  *Update: {mat}*\n\nDefault value : *ETB {default:.2f}*\nCurrent value : *ETB {current:.2f}*\n\nEnter the new cost in ETB:",parse_mode="Markdown",reply_markup=num_kb());return ENTER_COST
 async def enter_cost(update,context):
     if update.callback_query:
         q=update.callback_query;await q.answer()
-        if q.data=="goto_main": return await start(update,context)
+        if q.data=="goto_main":
+            await q.message.reply_text("Returning...",reply_markup=remove_kb())
+            return await start(update,context)
         if q.data=="goto_costs":
-            await q.edit_message_text(costs_text(context),parse_mode="Markdown",reply_markup=material_kb());return SELECT_MATERIAL
+            await q.message.reply_text(costs_text(context),parse_mode="Markdown",reply_markup=remove_kb())
+            await q.message.reply_text(costs_text(context),parse_mode="Markdown",reply_markup=material_kb());return SELECT_MATERIAL
         return ENTER_COST
     mat=context.user_data.get("material")
     try:
         c=float(update.message.text.strip())
         if c<0: raise ValueError
-    except ValueError: await update.message.reply_text("❌ Please enter a valid positive number.",reply_markup=back_to_costs_kb());return ENTER_COST
+    except ValueError: await update.message.reply_text("❌ Please enter a valid positive number.",reply_markup=num_kb());return ENTER_COST
     uc=get_uc(context);fc=get_fc(context)
     if mat in uc: old=uc[mat];uc[mat]=c;context.user_data["unit_costs"]=uc
     else: old=fc[mat];fc[mat]=c;context.user_data["fixed_costs"]=fc
-    await update.message.reply_text(f"✅ *{mat}* updated!\n\nETB {old:.2f}  →  ETB {c:.2f}\n\n_Update another or go to Main Menu:_",parse_mode="Markdown",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Update More",callback_data="goto_costs")],[InlineKeyboardButton("🏠 Main Menu",callback_data="goto_main")]]))
-    return SELECT_MATERIAL
+    await update.message.reply_text(f"✅ *{mat}* updated!\n\nETB {old:.2f}  →  ETB {c:.2f}\n\n_Update another or go to Main Menu:_",parse_mode="Markdown",reply_markup=remove_kb())
+    await update.message.reply_text(costs_text(context),parse_mode="Markdown",reply_markup=material_kb());return SELECT_MATERIAL
 async def cancel(update,context):
-    await update.message.reply_text("Cancelled. Type /start to begin again.");return ConversationHandler.END
+    await update.message.reply_text("Cancelled. Type /start to begin again.",reply_markup=remove_kb());return ConversationHandler.END
 async def run():
     BOT_TOKEN=os.environ["BOT_TOKEN"]
     logging.info("Starting COBUILT READY MIX Bot...")
