@@ -1,4 +1,4 @@
-import os, logging
+import os, asyncio, logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ConversationHandler, ContextTypes, filters
 
@@ -120,12 +120,15 @@ async def ech(update,context):
     await update.message.reply_text(mat+" updated: ETB "+str(old)+" to ETB "+str(c),reply_markup=mmk());return MAIN_MENU
 async def cancel(update,context):
     await update.message.reply_text("Cancelled. /start to restart.");return ConversationHandler.END
-def main():
+async def run():
     BOT_TOKEN=os.environ["BOT_TOKEN"]
     logging.info("Starting bot in polling mode...")
     ptb=Application.builder().token(BOT_TOKEN).build()
     conv=ConversationHandler(entry_points=[CommandHandler("start",start)],states={MAIN_MENU:[CallbackQueryHandler(mmh)],SELECT_GRADE:[CallbackQueryHandler(sgh)],GRADE_ACTION:[CallbackQueryHandler(gah)],ENTER_MARGIN:[MessageHandler(filters.TEXT&~filters.COMMAND,emh)],SELECT_MATERIAL:[CallbackQueryHandler(smh)],ENTER_COST:[MessageHandler(filters.TEXT&~filters.COMMAND,ech)]},fallbacks=[CommandHandler("cancel",cancel),CommandHandler("start",start)],per_message=False)
     ptb.add_handler(conv)
+    await ptb.initialize()
+    await ptb.start()
+    await ptb.updater.start_polling()
     logging.info("Bot polling started!")
-    ptb.run_polling()
-if __name__=="__main__": main()
+    await asyncio.Event().wait()
+if __name__=="__main__": asyncio.run(run())
