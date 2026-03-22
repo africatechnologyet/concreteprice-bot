@@ -1,5 +1,4 @@
 import os, logging
-from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ConversationHandler, ContextTypes, filters
 
@@ -13,7 +12,7 @@ DEFAULT_MARGINS = {'C5':0.13,'C10':0.13,'C15':0.10,'C20':0.13,'C25':0.13,'C30':0
 
 def grade_index(g): return GRADES.index(g)
 def calc_production_cost(grade,uc):
-    idx=grade_index(grade); bd,mat={},0
+    idx=grade_index(grade);bd,mat={},0
     for m,ql in MIX_QTY.items():
         q=ql[idx];c=q*uc[m];bd[m]={'qty':q,'unit_cost':uc[m],'cost':c};mat+=c
     fix=0
@@ -121,23 +120,12 @@ async def ech(update,context):
     await update.message.reply_text(mat+" updated: ETB "+str(old)+" to ETB "+str(c),reply_markup=mmk());return MAIN_MENU
 async def cancel(update,context):
     await update.message.reply_text("Cancelled. /start to restart.");return ConversationHandler.END
-async def webhook_handler(request):
-    data=await request.json();update=Update.de_json(data,request.app["ptb"].bot)
-    await request.app["ptb"].process_update(update);return web.Response(text="ok")
-async def health(request): return web.Response(text="ok")
-async def on_startup(app):
-    ptb=app["ptb"];await ptb.initialize();await ptb.start()
-    await ptb.bot.set_webhook(app["webhook_url"]+"/webhook");logging.info("Bot started and webhook set")
-async def on_cleanup(app):
-    await app["ptb"].stop();await app["ptb"].shutdown()
 def main():
-    BOT_TOKEN=os.environ["BOT_TOKEN"];WEBHOOK_URL=os.environ["WEBHOOK_URL"];PORT=int(os.environ.get("PORT",10000))
-    logging.info("Starting on port "+str(PORT))
+    BOT_TOKEN=os.environ["BOT_TOKEN"]
+    logging.info("Starting bot in polling mode...")
     ptb=Application.builder().token(BOT_TOKEN).build()
     conv=ConversationHandler(entry_points=[CommandHandler("start",start)],states={MAIN_MENU:[CallbackQueryHandler(mmh)],SELECT_GRADE:[CallbackQueryHandler(sgh)],GRADE_ACTION:[CallbackQueryHandler(gah)],ENTER_MARGIN:[MessageHandler(filters.TEXT&~filters.COMMAND,emh)],SELECT_MATERIAL:[CallbackQueryHandler(smh)],ENTER_COST:[MessageHandler(filters.TEXT&~filters.COMMAND,ech)]},fallbacks=[CommandHandler("cancel",cancel),CommandHandler("start",start)],per_message=False)
     ptb.add_handler(conv)
-    app=web.Application();app["ptb"]=ptb;app["webhook_url"]=WEBHOOK_URL
-    app.on_startup.append(on_startup);app.on_cleanup.append(on_cleanup)
-    app.router.add_post("/webhook",webhook_handler);app.router.add_get("/",health);app.router.add_get("/health",health)
-    web.run_app(app,host="0.0.0.0",port=PORT)
+    logging.info("Bot polling started!")
+    ptb.run_polling()
 if __name__=="__main__": main()
