@@ -1,263 +1,327 @@
-import os, logging
-from aiohttp import web
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import os
+import json
+from datetime import datetime
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, ConversationHandler, ContextTypes, filters
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ConversationHandler,
+    CallbackContext,
+    CallbackQueryHandler,
+    filters
 )
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, HRFlowable
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from io import BytesIO
 
-logging.basicConfig(level=logging.INFO)
+# --- Configuration & Persistence ---
+CUSTOMER, LOCATION_INPUT, GRADES, PRICE, QUANTITY, EXTRAS, CONFIRM = range(7)
+GRADES_LIST = ['C-15', 'C-20', 'C-25', 'C-30', 'C-35', 'C-37', 'C-40', 'C-45', 'C-50']
+EXTRAS_LIST = ['Elephant pump', 'Vibrator', 'Skip', 'None']
+ADMIN_IDS = [5613539602]
+DATA_FILE = 'bot_data.json'
 
-GRADES = ["C5","C10","C15","C20","C25","C30","C35","C40","C45","C50","C60"]
-DEFAULT_UNIT_COSTS = {
-    "Cement":16.08,"Sand":3.15,"Gravel 00":2.47,
-    "Gravel 01":1.89,"Gravel 02":2.40,"Water":0.50,"Chemicals":102.00
-}
-MIX_QTY = {
-    "Cement":  [190,270,265,280,300,320,350,390,460,500,560],
-    "Sand":    [341,500,432.1,432,700,665,723,700,655,610,590],
-    "Gravel 00":[341,530,432.1,432,310,245,188,200,235,200,210],
-    "Gravel 01":[494,300,190.16,190,335,330,351,320,301,310,320],
-    "Gravel 02":[741,700,846,760,635,670,652,645,645,640,640],
-    "Water":   [120,150,150,115,140,145,157,145,150,150,150],
-    "Chemicals":[1.54,1.54,1.54,1.54,6.0,6.4,7.0,8.2,9.2,10.0,11.2],
-}
-FIXED_COSTS = {
-    "Labor":      [160,160,160,160,200,147,160,200,200,200,200],
-    "Overhead":   [160,160,160,160,200,147,160,200,200,200,200],
-    "Reject 2.5%":[264,264,264,264,264,264,264,264,264,264,264],
-    "Truck":      [400,400,400,400,400,400,400,400,400,400,400],
-    "Fuel":       [317,260,200,366,200,200,260,200,200,353,244],
-    "Pump":       [400,0,0,550,234,234,600,341,366,400,705],
-}
-DEFAULT_MARGINS = {
-    "C5":0.13,"C10":0.13,"C15":0.10,"C20":0.13,"C25":0.13,
-    "C30":0.13,"C35":0.13,"C40":0.11,"C45":0.13,"C50":0.13,"C60":0.13
-}
+def load_data():
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, 'r') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            pass
+    return {'quote_counter': 100, 'quotes': {}}
 
-def grade_index(g): return GRADES.index(g)
+def save_data(data):
+    with open(DATA_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
 
-def calc_production_cost(grade, uc):
-    idx = grade_index(grade)
-    bd, mat = {}, 0
-    for m, ql in MIX_QTY.items():
-        q=ql[idx]; c=q*uc[m]; bd[m]={"qty":q,"unit_cost":uc[m],"cost":c}; mat+=c
-    fix = 0
-    for item, cl in FIXED_COSTS.items():
-        c=cl[idx]; bd[item]={"cost":c}; fix+=c
-    return bd, mat+fix
+bot_data = load_data()
 
-def calc_sale_price(grade, uc, margin=None):
-    bd, pc = calc_production_cost(grade, uc)
-    if margin is None: margin = DEFAULT_MARGINS[grade]
-    sp = pc*(1+margin)
-    return {"breakdown":bd,"prod_cost":pc,"margin":margin,"sale_price":sp,"profit":sp-pc}
+# --- PDF Generation Logic ---
+def generate_pdf(pi_data):
+    buffer = BytesIO()
+    pdf = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=40, leftMargin=40, topMargin=25, bottomMargin=25)
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=18, textColor=colors.HexColor('#1a3a6b'), spaceAfter=8, alignment=TA_CENTER, fontName='Helvetica-Bold')
+    header_style = ParagraphStyle('Header', parent=styles['Normal'], fontSize=7, textColor=colors.HexColor('#666666'), alignment=TA_LEFT)
+    
+    company_info = """
+    <b>CoBuilt Solutions</b><br/>
+    Addis Ababa, Ethiopia<br/>
+    Phone: +251911246502<br/>
+    +251911246820<br/>
+    Email: CoBuilt@CoBuilt.com<br/>
+    Web: www.CoBuilt.com
+    """
+    
+    try:
+        logo = Image('logo.png', width=1*inch, height=1*inch)
+        logo.hAlign = 'RIGHT'
+        header_table = Table([[Paragraph(company_info, header_style), logo]], colWidths=[4*inch, 3*inch])
+        header_table.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('ALIGN', (0, 0), (0, 0), 'LEFT'),
+            ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+        ]))
+        elements.append(header_table)
+    except:
+        elements.append(Paragraph(company_info, header_style))
+    
+    elements.append(Spacer(1, 6))
+    elements.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#1a3a6b'), spaceAfter=6))
+    elements.append(Paragraph("CONCRETE QUOTE", title_style))
+    elements.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#cccccc'), spaceBefore=2, spaceAfter=6))
+    
+    date_quote = f"<para align=right><b>Date:</b> {datetime.now().strftime('%b %d, %Y')}<br/><b>Quote No:</b> {pi_data['quote_number']}</para>"
+    elements.append(Paragraph(date_quote, styles['Normal']))
+    elements.append(Spacer(1, 6))
+    
+    total_quantity = sum(pi_data['quantity'][g] for g in pi_data['grades'])
+    
+    customer_data = [
+        ['Company:', pi_data['customer'], 'Additional service:', pi_data['extras']],
+        ['Location:', pi_data['location'], 'Payment terms:', '100% advance'],
+        ['Quantity:', f"{total_quantity:,.2f}m³", 'Validity of quote:', 'Valid for 3 days'],
+        ['Concrete Grade:', ', '.join(pi_data['grades']), '', '']
+    ]
+    
+    customer_table = Table(customer_data, colWidths=[1.3*inch, 2*inch, 1.6*inch, 2*inch])
+    customer_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 7),
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
+        ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor('#333333')),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('LINEBELOW', (0, 0), (-1, -1), 0.5, colors.HexColor('#dddddd')),
+    ]))
+    elements.append(customer_table)
+    elements.append(Spacer(1, 8))
+    
+    table_data = [['No.', 'Description', 'Grade', 'Quantity', 'Price', 'Total Price']]
+    total_amount = 0
+    for idx, grade in enumerate(pi_data['grades'], 1):
+        unit_price = pi_data['unit_price'][grade]
+        quantity = pi_data['quantity'][grade]
+        line_total = unit_price * quantity
+        total_amount += line_total
+        table_data.append([str(idx), 'Concrete OPC', grade, f"{quantity:,.2f}m³", f"{unit_price:,.2f}", f"{line_total:,.2f}"])
+    
+    table_data.append(['', '', '', '', 'Subtotal:', f"{total_amount:,.2f}"])
+    vat_amount = total_amount * 0.15
+    table_data.append(['', '', '', '', 'VAT (15%):', f"{vat_amount:,.2f}"])
+    grand_total = total_amount + vat_amount
+    table_data.append(['', '', '', '', 'Grand Total:', f"{grand_total:,.2f}"])
+    
+    pricing_table = Table(table_data, colWidths=[0.4*inch, 2.3*inch, 0.7*inch, 0.9*inch, 1.1*inch, 1.4*inch])
+    pricing_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#d2691e')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+        ('TOPPADDING', (0, 0), (-1, 0), 8),
+        ('BACKGROUND', (0, 1), (-1, -4), colors.beige),
+        ('TEXTCOLOR', (0, 1), (-1, -1), colors.HexColor('#333333')),
+        ('ALIGN', (0, 1), (-1, -4), 'CENTER'),
+        ('FONTNAME', (0, 1), (-1, -4), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -4), 7),
+        ('GRID', (0, 0), (-1, -4), 0.5, colors.HexColor('#999999')),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -4), [colors.beige, colors.white]),
+        ('SPAN', (0, -3), (3, -3)),
+        ('ALIGN', (4, -3), (-1, -3), 'RIGHT'),
+        ('FONTNAME', (4, -3), (-1, -3), 'Helvetica-Bold'),
+        ('FONTSIZE', (4, -3), (-1, -3), 8),
+        ('LINEABOVE', (0, -3), (-1, -3), 1, colors.HexColor('#999999')),
+        ('SPAN', (0, -2), (3, -2)),
+        ('ALIGN', (4, -2), (-1, -2), 'RIGHT'),
+        ('FONTNAME', (4, -2), (-1, -2), 'Helvetica'),
+        ('FONTSIZE', (4, -2), (-1, -2), 7),
+        ('SPAN', (0, -1), (3, -1)),
+        ('ALIGN', (4, -1), (-1, -1), 'RIGHT'),
+        ('FONTNAME', (4, -1), (-1, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (4, -1), (-1, -1), 9),
+        ('LINEABOVE', (0, -1), (-1, -1), 1.5, colors.HexColor('#d2691e')),
+        ('BACKGROUND', (4, -1), (-1, -1), colors.HexColor('#f5f5dc')),
+    ]))
+    elements.append(pricing_table)
+    elements.append(Spacer(1, 6))
+    
+    note_style = ParagraphStyle('Note', parent=styles['Normal'], fontSize=6, textColor=colors.HexColor('#666666'))
+    elements.append(Paragraph("Note: VAT (15%) has been included in the Grand Total.", note_style))
+    elements.append(Spacer(1, 5))
+    
+    terms_style = ParagraphStyle('Terms', parent=styles['Normal'], fontSize=7)
+    elements.append(Paragraph("<b>Terms & Conditions</b>", terms_style))
+    elements.append(Paragraph("• Delivery Schedule: 7–10 working days.<br/>• Payment: 100% advance.<br/>• Validity: 3 days.", terms_style))
+    
+    try:
+        signature = Image('signature.png', width=3*inch, height=1.75*inch)
+        signature.hAlign = 'RIGHT'
+        elements.append(signature)
+    except:
+        pass
 
-def fmt_summary(grade, r):
-    return (f"*{grade} - Price Summary*\n```\n"
-            f"Prod Cost:  ETB {r['prod_cost']:>10,.2f}\n"
-            f"Margin:         {r['margin']*100:.1f}%\n"
-            f"Sale Price: ETB {r['sale_price']:>10,.2f}\n"
-            f"Profit:     ETB {r['profit']:>10,.2f}\n```")
+    pdf.build(elements)
+    buffer.seek(0)
+    return buffer
 
-def fmt_breakdown(grade, r):
-    bd = r["breakdown"]
-    lines = [f"*{grade} - Full Breakdown*\n```",
-             f"{'Item':<14}{'Qty':>9}{'Rate':>8}{'Cost':>12}","-"*44]
-    for m in MIX_QTY:
-        d=bd[m]; lines.append(f"{m:<14}{d['qty']:>9.2f}{d['unit_cost']:>8.2f}{d['cost']:>12,.2f}")
-    lines.append("-"*44)
-    for item in FIXED_COSTS:
-        lines.append(f"{item:<14}{'':>9}{'':>8}{bd[item]['cost']:>12,.2f}")
-    lines += ["-"*44,
-              f"{'Prod Cost':<30}{r['prod_cost']:>14,.2f}",
-              f"{'Margin':<30}{r['margin']*100:>13.1f}%",
-              f"{'Sale Price':<30}{r['sale_price']:>14,.2f}","```"]
-    return "\n".join(lines)
+# --- Handlers ---
 
-def fmt_margins(grade, uc):
-    _, pc = calc_production_cost(grade, uc)
-    lines = [f"*{grade} - All Margins*\n```",
-             f"{'Margin':<10}{'Sale Price':>16}{'Profit':>14}","-"*42]
-    for m in [0.10,0.11,0.12,0.13]:
-        sp=pc*(1+m); tag=" <--" if m==DEFAULT_MARGINS[grade] else ""
-        lines.append(f"{m*100:.0f}%{'':<7}{sp:>16,.2f}{sp-pc:>14,.2f}{tag}")
-    lines.append("```")
-    return "\n".join(lines)
+async def start(update: Update, context: CallbackContext):
+    await update.message.reply_text(
+        f"👋 Welcome to CoBuilt Solutions PI Bot!\n\n/createpi - Create Quote\n/myquotes - View History\n/help - Help"
+    )
 
-(MAIN_MENU,SELECT_GRADE,GRADE_ACTION,
- ENTER_MARGIN,SELECT_MATERIAL,ENTER_COST) = range(6)
-
-def mmk():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Get Sale Price", callback_data="menu_price")],
-        [InlineKeyboardButton("Update Unit Costs", callback_data="menu_costs")],
-        [InlineKeyboardButton("All Margins Table", callback_data="menu_margins")],
-        [InlineKeyboardButton("Reset Unit Costs", callback_data="menu_reset")],
-    ])
-
-def gk(pfx):
-    rows,row=[],[]
-    for g in GRADES:
-        row.append(InlineKeyboardButton(g, callback_data=pfx+"_"+g))
-        if len(row)==4: rows.append(row); row=[]
-    if row: rows.append(row)
-    rows.append([InlineKeyboardButton("Main Menu", callback_data="goto_main")])
-    return InlineKeyboardMarkup(rows)
-
-def gak(grade):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Price Summary", callback_data="summary_"+grade)],
-        [InlineKeyboardButton("Full Breakdown", callback_data="breakdown_"+grade)],
-        [InlineKeyboardButton("Custom Margin", callback_data="custom_"+grade)],
-        [InlineKeyboardButton("Back", callback_data="menu_price"),
-         InlineKeyboardButton("Main Menu", callback_data="goto_main")],
-    ])
-
-def mk():
-    rows=[[InlineKeyboardButton(m, callback_data="setcost_"+m)] for m in DEFAULT_UNIT_COSTS]
-    rows.append([InlineKeyboardButton("Main Menu", callback_data="goto_main")])
-    return InlineKeyboardMarkup(rows)
-
-def get_uc(ctx): return ctx.user_data.get("unit_costs", dict(DEFAULT_UNIT_COSTS))
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def create_pi(update: Update, context: CallbackContext):
     context.user_data.clear()
-    text = "Concrete Price Calculator\nGrades C5-C60 | Prices in ETB per m3"
-    if update.message:
-        await update.message.reply_text(text, reply_markup=mmk())
+    context.user_data['pi_data'] = {
+        'user_id': update.effective_user.id,
+        'username': update.effective_user.username or update.effective_user.first_name,
+        'created_at': datetime.now().isoformat()
+    }
+    await update.message.reply_text("👤 Enter customer/company name:", reply_markup=ReplyKeyboardMarkup([['❌ Cancel']], resize_keyboard=True))
+    return CUSTOMER
+
+async def customer_name(update: Update, context: CallbackContext):
+    if update.message.text == '❌ Cancel': return await cancel(update, context)
+    context.user_data['pi_data']['customer'] = update.message.text
+    await update.message.reply_text("📍 Enter delivery location:", reply_markup=ReplyKeyboardMarkup([['⬅️ Back', '❌ Cancel']], resize_keyboard=True))
+    return LOCATION_INPUT
+
+async def location_input(update: Update, context: CallbackContext):
+    if update.message.text == '❌ Cancel': return await cancel(update, context)
+    if update.message.text == '⬅️ Back': return await create_pi(update, context)
+    context.user_data['pi_data']['location'] = update.message.text
+    keyboard = [GRADES_LIST[i:i+4] for i in range(0, len(GRADES_LIST), 4)]
+    keyboard.append(['⬅️ Back', '❌ Cancel'])
+    await update.message.reply_text("🧱 Select grades (comma separated):", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+    return GRADES
+
+async def grades(update: Update, context: CallbackContext):
+    if update.message.text == '❌ Cancel': return await cancel(update, context)
+    grades = [g.strip().upper() for g in update.message.text.split(',') if g.strip() in GRADES_LIST]
+    if not grades:
+        await update.message.reply_text("❌ Please select valid grades.")
+        return GRADES
+    context.user_data['pi_data']['grades'] = grades
+    context.user_data['pi_data']['unit_price'] = {}
+    context.user_data['pi_data']['quantity'] = {}
+    context.user_data['current_grade_index'] = 0
+    grade = grades[0]
+    await update.message.reply_text(f"💵 Grade: {grade}\nEnter price per m³:", reply_markup=ReplyKeyboardMarkup([['❌ Cancel']], resize_keyboard=True))
+    return PRICE
+
+async def price(update: Update, context: CallbackContext):
+    if update.message.text == '❌ Cancel': return await cancel(update, context)
+    idx = context.user_data['current_grade_index']
+    grade = context.user_data['pi_data']['grades'][idx]
+    try:
+        context.user_data['pi_data']['unit_price'][grade] = float(update.message.text.replace(',', ''))
+    except ValueError:
+        await update.message.reply_text("❌ Enter a valid number.")
+        return PRICE
+    await update.message.reply_text(f"📏 Grade: {grade}\nEnter quantity in m³:")
+    return QUANTITY
+
+async def quantity(update: Update, context: CallbackContext):
+    if update.message.text == '❌ Cancel': return await cancel(update, context)
+    idx = context.user_data['current_grade_index']
+    grade = context.user_data['pi_data']['grades'][idx]
+    try:
+        context.user_data['pi_data']['quantity'][grade] = float(update.message.text.replace(',', ''))
+    except ValueError:
+        await update.message.reply_text("❌ Enter a valid number.")
+        return QUANTITY
+    
+    context.user_data['current_grade_index'] += 1
+    if context.user_data['current_grade_index'] < len(context.user_data['pi_data']['grades']):
+        next_grade = context.user_data['pi_data']['grades'][context.user_data['current_grade_index']]
+        await update.message.reply_text(f"💵 Grade: {next_grade}\nEnter price per m³:")
+        return PRICE
     else:
-        await update.callback_query.edit_message_text(text, reply_markup=mmk())
-    return MAIN_MENU
+        keyboard = [EXTRAS_LIST, ['❌ Cancel']]
+        await update.message.reply_text("🧰 Extras (comma separated):", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+        return EXTRAS
 
-async def mmh(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q=update.callback_query; await q.answer(); d=q.data
-    if d=="menu_price":
-        await q.edit_message_text("Select grade:", reply_markup=gk("price")); return SELECT_GRADE
-    elif d=="menu_margins":
-        await q.edit_message_text("Select grade:", reply_markup=gk("margins")); return SELECT_GRADE
-    elif d=="menu_costs":
-        uc=get_uc(context)
-        txt="Current Unit Costs (ETB)\n\n"+"\n".join(m+": "+str(c) for m,c in uc.items())+"\n\nSelect material:"
-        await q.edit_message_text(txt, reply_markup=mk()); return SELECT_MATERIAL
-    elif d=="menu_reset":
-        context.user_data["unit_costs"]=dict(DEFAULT_UNIT_COSTS)
-        await q.edit_message_text("Costs reset.", reply_markup=mmk()); return MAIN_MENU
-    elif d=="goto_main": return await start(update, context)
+async def extras(update: Update, context: CallbackContext):
+    context.user_data['pi_data']['extras'] = update.message.text
+    pi = context.user_data['pi_data']
+    summary = f"📋 *DRAFT*\nCustomer: {pi['customer']}\nLocation: {pi['location']}\n"
+    keyboard = [[InlineKeyboardButton("✅ Submit", callback_data='confirm_yes')], [InlineKeyboardButton("❌ Cancel", callback_data='confirm_no')]]
+    await update.message.reply_text(summary, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    return CONFIRM
 
-async def sgh(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q=update.callback_query; await q.answer(); d=q.data
-    if d=="goto_main": return await start(update, context)
-    if d.startswith("price_"):
-        grade=d.split("_",1)[1]; context.user_data["grade"]=grade
-        await q.edit_message_text(grade+" - Choose:", reply_markup=gak(grade)); return GRADE_ACTION
-    elif d.startswith("margins_"):
-        grade=d.split("_",1)[1]
-        await q.edit_message_text(fmt_margins(grade,get_uc(context)),
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("Back",callback_data="menu_margins"),
-                InlineKeyboardButton("Main Menu",callback_data="goto_main")]])); return SELECT_GRADE
-    elif d in ("menu_price","menu_margins"):
-        pfx="price" if d=="menu_price" else "margins"
-        await q.edit_message_text("Select grade:", reply_markup=gk(pfx)); return SELECT_GRADE
-
-async def gah(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q=update.callback_query; await q.answer(); d=q.data; uc=get_uc(context)
-    if d=="goto_main": return await start(update, context)
-    if d=="menu_price":
-        await q.edit_message_text("Select grade:", reply_markup=gk("price")); return SELECT_GRADE
-    if d.startswith("summary_"):
-        grade=d.split("_",1)[1]
-        await q.edit_message_text(fmt_summary(grade,calc_sale_price(grade,uc)), reply_markup=gak(grade)); return GRADE_ACTION
-    elif d.startswith("breakdown_"):
-        grade=d.split("_",1)[1]
-        await q.edit_message_text(fmt_breakdown(grade,calc_sale_price(grade,uc)), reply_markup=gak(grade)); return GRADE_ACTION
-    elif d.startswith("custom_"):
-        grade=d.split("_",1)[1]; context.user_data["grade"]=grade
-        await q.edit_message_text("Enter margin % for "+grade+" (e.g. 12):"); return ENTER_MARGIN
-
-async def emh(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    grade=context.user_data.get("grade")
-    try:
-        m=float(update.message.text.strip().replace("%",""))/100
-        if not (0<m<2): raise ValueError
-    except ValueError:
-        await update.message.reply_text("Enter a number between 1-100."); return ENTER_MARGIN
-    await update.message.reply_text(fmt_summary(grade,calc_sale_price(grade,get_uc(context),m)), reply_markup=gak(grade))
-    return GRADE_ACTION
-
-async def smh(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q=update.callback_query; await q.answer(); d=q.data
-    if d=="goto_main": return await start(update, context)
-    if d.startswith("setcost_"):
-        mat=d[len("setcost_"):]; context.user_data["material"]=mat
-        await q.edit_message_text(mat+"\nCurrent: ETB "+str(get_uc(context)[mat])+"\n\nEnter new cost in ETB:"); return ENTER_COST
-
-async def ech(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mat=context.user_data.get("material")
-    try:
-        c=float(update.message.text.strip())
-        if c<0: raise ValueError
-    except ValueError:
-        await update.message.reply_text("Enter a valid positive number."); return ENTER_COST
-    uc=get_uc(context); old=uc[mat]; uc[mat]=c; context.user_data["unit_costs"]=uc
-    await update.message.reply_text(mat+" updated: ETB "+str(old)+" to ETB "+str(c), reply_markup=mmk())
-    return MAIN_MENU
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Cancelled. /start to restart.")
+async def confirm(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+    if query.data == 'confirm_yes':
+        global bot_data
+        bot_data['quote_counter'] += 1
+        q_num = f"RMX-{bot_data['quote_counter']:04d}"
+        pi = context.user_data['pi_data']
+        pi['quote_number'] = q_num
+        pi['status'] = 'pending'
+        bot_data['quotes'][q_num] = pi
+        save_data(bot_data)
+        await query.edit_message_text(f"✅ Submitted! Quote No: {q_num}")
+        # Notify Admin
+        for admin_id in ADMIN_IDS:
+            await context.bot.send_message(admin_id, f"🔔 New Quote: {q_num}\nCustomer: {pi['customer']}", 
+                                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Approve", callback_data=f"approve_{q_num}")]]) )
     return ConversationHandler.END
 
-async def webhook_handler(request):
-    data = await request.json()
-    update = Update.de_json(data, request.app["ptb"].bot)
-    await request.app["ptb"].process_update(update)
-    return web.Response(text="ok")
+async def handle_approval(update: Update, context: CallbackContext):
+    query = update.callback_query
+    _, q_num = query.data.split('_')
+    pi = bot_data['quotes'].get(q_num)
+    if pi:
+        pi['status'] = 'approved'
+        save_data(bot_data)
+        pdf = generate_pdf(pi)
+        await context.bot.send_document(pi['user_id'], document=pdf, filename=f"{q_num}.pdf", caption="Approved!")
+        await query.edit_message_text(f"Quote {q_num} Approved & Sent.")
 
-async def health(request):
-    return web.Response(text="ok")
+async def cancel(update: Update, context: CallbackContext):
+    await update.message.reply_text("Cancelled.", reply_markup=ReplyKeyboardRemove())
+    return ConversationHandler.END
 
-async def on_startup(app):
-    ptb = app["ptb"]
-    await ptb.initialize()
-    await ptb.bot.set_webhook(app["webhook_url"]+"/webhook")
-    logging.info("Webhook set OK - bot ready")
-
-async def on_cleanup(app):
-    await app["ptb"].shutdown()
+async def handle_start_over(update: Update, context: CallbackContext):
+    return await create_pi(update, context)
 
 def main():
-    BOT_TOKEN = os.environ["BOT_TOKEN"]
-    WEBHOOK_URL = os.environ["WEBHOOK_URL"]
-    PORT = int(os.environ.get("PORT", 10000))
-    logging.info("Starting on port "+str(PORT))
-
-    ptb = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token("8513160001:AAELK8YtZxL34U2tWrNsXLOGooJEVSWqKWI").build()
+    
     conv = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[CommandHandler('createpi', create_pi), CallbackQueryHandler(handle_start_over, pattern='^start_over$')],
         states={
-            MAIN_MENU:       [CallbackQueryHandler(mmh)],
-            SELECT_GRADE:    [CallbackQueryHandler(sgh)],
-            GRADE_ACTION:    [CallbackQueryHandler(gah)],
-            ENTER_MARGIN:    [MessageHandler(filters.TEXT & ~filters.COMMAND, emh)],
-            SELECT_MATERIAL: [CallbackQueryHandler(smh)],
-            ENTER_COST:      [MessageHandler(filters.TEXT & ~filters.COMMAND, ech)],
+            CUSTOMER: [MessageHandler(filters.TEXT & ~filters.COMMAND, customer_name)],
+            LOCATION_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, location_input)],
+            GRADES: [MessageHandler(filters.TEXT & ~filters.COMMAND, grades)],
+            PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, price)],
+            QUANTITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, quantity)],
+            EXTRAS: [MessageHandler(filters.TEXT & ~filters.COMMAND, extras)],
+            CONFIRM: [CallbackQueryHandler(confirm)]
         },
-        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
-        per_message=False,
+        fallbacks=[CommandHandler('cancel', cancel)]
     )
-    ptb.add_handler(conv)
+    
+    app.add_handler(conv)
+    app.add_handler(CommandHandler('start', start))
+    app.add_handler(CallbackQueryHandler(handle_approval, pattern='^approve_'))
+    
+    print("Bot is running...")
+    app.run_polling()
 
-    app = web.Application()
-    app["ptb"] = ptb
-    app["webhook_url"] = WEBHOOK_URL
-    app.on_startup.append(on_startup)
-    app.on_cleanup.append(on_cleanup)
-    app.router.add_post("/webhook", webhook_handler)
-    app.router.add_get("/", health)
-    app.router.add_get("/health", health)
-
-    web.run_app(app, host="0.0.0.0", port=PORT)
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
