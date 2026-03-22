@@ -1,9 +1,5 @@
 """
 Concrete Sales Price Calculator — Telegram Bot (Render/Webhook mode)
-Deploy on Render as a Web Service.
-Set environment variables:
-  BOT_TOKEN   — from @BotFather
-  WEBHOOK_URL — your Render URL, e.g. https://your-app.onrender.com
 """
 
 import os
@@ -15,11 +11,6 @@ from telegram.ext import (
 )
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# ─────────────────────────────────────────────
-# DATA
-# ─────────────────────────────────────────────
 
 GRADES = ["C5", "C10", "C15", "C20", "C25", "C30", "C35", "C40", "C45", "C50", "C60"]
 
@@ -58,10 +49,6 @@ DEFAULT_MARGINS = {
     "C45": 0.13, "C50": 0.13, "C60": 0.13,
 }
 
-# ─────────────────────────────────────────────
-# CALCULATION ENGINE
-# ─────────────────────────────────────────────
-
 def grade_index(grade):
     return GRADES.index(grade)
 
@@ -86,17 +73,8 @@ def calc_sale_price(grade, unit_costs, margin=None):
     if margin is None:
         margin = DEFAULT_MARGINS[grade]
     sale_price = prod_cost * (1 + margin)
-    return {
-        "breakdown": breakdown,
-        "prod_cost": prod_cost,
-        "margin": margin,
-        "sale_price": sale_price,
-        "profit": sale_price - prod_cost,
-    }
-
-# ─────────────────────────────────────────────
-# FORMATTERS
-# ─────────────────────────────────────────────
+    return {"breakdown": breakdown, "prod_cost": prod_cost,
+            "margin": margin, "sale_price": sale_price, "profit": sale_price - prod_cost}
 
 def fmt_price_summary(grade, result):
     lines = [
@@ -140,16 +118,8 @@ def fmt_all_margins(grade, unit_costs):
     lines.append("```")
     return "\n".join(lines)
 
-# ─────────────────────────────────────────────
-# STATES
-# ─────────────────────────────────────────────
-
 (MAIN_MENU, SELECT_GRADE, GRADE_ACTION,
  ENTER_CUSTOM_MARGIN, SELECT_COST_MATERIAL, ENTER_COST_VALUE) = range(6)
-
-# ─────────────────────────────────────────────
-# KEYBOARDS
-# ─────────────────────────────────────────────
 
 def main_menu_keyboard():
     return InlineKeyboardMarkup([
@@ -162,7 +132,7 @@ def main_menu_keyboard():
 def grade_keyboard(action_prefix):
     rows = []
     row = []
-    for i, g in enumerate(GRADES):
+    for g in GRADES:
         row.append(InlineKeyboardButton(g, callback_data=f"{action_prefix}_{g}"))
         if len(row) == 4:
             rows.append(row); row = []
@@ -185,24 +155,15 @@ def material_keyboard():
     rows.append([InlineKeyboardButton("🏠 Main Menu", callback_data="goto_main")])
     return InlineKeyboardMarkup(rows)
 
-# ─────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────
-
 def get_unit_costs(context):
     return context.user_data.get("unit_costs", dict(DEFAULT_UNIT_COSTS))
-
-# ─────────────────────────────────────────────
-# HANDLERS
-# ─────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     text = (
         "🏗️ *Concrete Sales Price Calculator*\n\n"
         "Welcome! I calculate sale prices for concrete grades C5–C60.\n"
-        "All prices are in *ETB per m³*.\n\n"
-        "What would you like to do?"
+        "All prices are in *ETB per m³*.\n\nWhat would you like to do?"
     )
     if update.message:
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_menu_keyboard())
@@ -214,15 +175,12 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-
     if data == "menu_price":
         await query.edit_message_text("📦 *Select a concrete grade:*", parse_mode="Markdown", reply_markup=grade_keyboard("price"))
         return SELECT_GRADE
-
     elif data == "menu_margins":
         await query.edit_message_text("📦 *Select a grade to see all margin options:*", parse_mode="Markdown", reply_markup=grade_keyboard("margins"))
         return SELECT_GRADE
-
     elif data == "menu_costs":
         unit_costs = get_unit_costs(context)
         lines = ["⚙️ *Current Unit Costs (ETB)*\n", "```"]
@@ -232,12 +190,10 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("```\nSelect a material to update:")
         await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=material_keyboard())
         return SELECT_COST_MATERIAL
-
     elif data == "menu_reset":
         context.user_data["unit_costs"] = dict(DEFAULT_UNIT_COSTS)
-        await query.edit_message_text("✅ Unit costs have been *reset* to original values.\n\nWhat would you like to do?", parse_mode="Markdown", reply_markup=main_menu_keyboard())
+        await query.edit_message_text("✅ Unit costs *reset* to original values.\n\nWhat would you like to do?", parse_mode="Markdown", reply_markup=main_menu_keyboard())
         return MAIN_MENU
-
     elif data == "goto_main":
         return await start(update, context)
 
@@ -245,16 +201,13 @@ async def select_grade_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     data = query.data
-
     if data == "goto_main":
         return await start(update, context)
-
     if data.startswith("price_"):
         grade = data.split("_", 1)[1]
         context.user_data["selected_grade"] = grade
         await query.edit_message_text(f"*{grade} — What would you like?*", parse_mode="Markdown", reply_markup=grade_action_keyboard(grade))
         return GRADE_ACTION
-
     elif data.startswith("margins_"):
         grade = data.split("_", 1)[1]
         msg = fmt_all_margins(grade, get_unit_costs(context))
@@ -263,7 +216,6 @@ async def select_grade_handler(update: Update, context: ContextTypes.DEFAULT_TYP
              InlineKeyboardButton("🏠 Main Menu", callback_data="goto_main")]
         ]))
         return SELECT_GRADE
-
     elif data in ("menu_price", "menu_margins"):
         prefix = "price" if data == "menu_price" else "margins"
         label = "Select a concrete grade:" if prefix == "price" else "Select a grade to see all margin options:"
@@ -275,26 +227,21 @@ async def grade_action_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
     data = query.data
     unit_costs = get_unit_costs(context)
-
     if data == "goto_main":
         return await start(update, context)
-
     if data == "menu_price":
         await query.edit_message_text("📦 *Select a concrete grade:*", parse_mode="Markdown", reply_markup=grade_keyboard("price"))
         return SELECT_GRADE
-
     if data.startswith("summary_"):
         grade = data.split("_", 1)[1]
         result = calc_sale_price(grade, unit_costs)
         await query.edit_message_text(fmt_price_summary(grade, result), parse_mode="Markdown", reply_markup=grade_action_keyboard(grade))
         return GRADE_ACTION
-
     elif data.startswith("breakdown_"):
         grade = data.split("_", 1)[1]
         result = calc_sale_price(grade, unit_costs)
         await query.edit_message_text(fmt_full_breakdown(grade, result), parse_mode="Markdown", reply_markup=grade_action_keyboard(grade))
         return GRADE_ACTION
-
     elif data.startswith("custom_"):
         grade = data.split("_", 1)[1]
         context.user_data["selected_grade"] = grade
@@ -327,8 +274,7 @@ async def select_cost_material(update: Update, context: ContextTypes.DEFAULT_TYP
         current = get_unit_costs(context)[material]
         await query.edit_message_text(
             f"✏️ *{material}*\nCurrent cost: ETB {current:.2f}/kg\n\nEnter new unit cost in ETB:",
-            parse_mode="Markdown",
-        )
+            parse_mode="Markdown")
         return ENTER_COST_VALUE
 
 async def enter_cost_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -347,22 +293,16 @@ async def enter_cost_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["unit_costs"] = unit_costs
     await update.message.reply_text(
         f"✅ *{material}* updated\nETB {old_cost:.2f} → ETB {new_cost:.2f}\n\nWhat would you like to do next?",
-        parse_mode="Markdown",
-        reply_markup=main_menu_keyboard(),
-    )
+        parse_mode="Markdown", reply_markup=main_menu_keyboard())
     return MAIN_MENU
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Cancelled. Type /start to begin again.")
     return ConversationHandler.END
 
-# ─────────────────────────────────────────────
-# MAIN — WEBHOOK MODE FOR RENDER
-# ─────────────────────────────────────────────
-
 def main():
     BOT_TOKEN = os.environ["BOT_TOKEN"]
-    WEBHOOK_URL = os.environ["WEBHOOK_URL"]  # e.g. https://your-app.onrender.com
+    WEBHOOK_URL = os.environ["WEBHOOK_URL"]
     PORT = int(os.environ.get("PORT", 8443))
 
     app = Application.builder().token(BOT_TOKEN).build()
@@ -370,12 +310,12 @@ def main():
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            MAIN_MENU:             [CallbackQueryHandler(main_menu_handler)],
-            SELECT_GRADE:          [CallbackQueryHandler(select_grade_handler)],
-            GRADE_ACTION:          [CallbackQueryHandler(grade_action_handler)],
-            ENTER_CUSTOM_MARGIN:   [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_custom_margin)],
-            SELECT_COST_MATERIAL:  [CallbackQueryHandler(select_cost_material)],
-            ENTER_COST_VALUE:      [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_cost_value)],
+            MAIN_MENU:            [CallbackQueryHandler(main_menu_handler)],
+            SELECT_GRADE:         [CallbackQueryHandler(select_grade_handler)],
+            GRADE_ACTION:         [CallbackQueryHandler(grade_action_handler)],
+            ENTER_CUSTOM_MARGIN:  [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_custom_margin)],
+            SELECT_COST_MATERIAL: [CallbackQueryHandler(select_cost_material)],
+            ENTER_COST_VALUE:     [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_cost_value)],
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
     )
