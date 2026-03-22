@@ -9,12 +9,10 @@ from telegram.ext import (
 logging.basicConfig(level=logging.INFO)
 
 GRADES = ["C5", "C10", "C15", "C20", "C25", "C30", "C35", "C40", "C45", "C50", "C60"]
-
 DEFAULT_UNIT_COSTS = {
     "Cement": 16.08, "Sand": 3.15, "Gravel 00": 2.47,
     "Gravel 01": 1.89, "Gravel 02": 2.40, "Water": 0.50, "Chemicals": 102.00,
 }
-
 MIX_QTY = {
     "Cement":   [190, 270, 265, 280, 300, 320, 350, 390, 460, 500, 560],
     "Sand":     [341, 500, 432.1, 432, 700, 665, 723, 700, 655, 610, 590],
@@ -24,7 +22,6 @@ MIX_QTY = {
     "Water":    [120, 150, 150, 115, 140, 145, 157, 145, 150, 150, 150],
     "Chemicals":[1.54, 1.54, 1.54, 1.54, 6.0, 6.4, 7.0, 8.2, 9.2, 10.0, 11.2],
 }
-
 FIXED_COSTS = {
     "Labor":       [160, 160, 160, 160, 200, 147, 160, 200, 200, 200, 200],
     "Overhead":    [160, 160, 160, 160, 200, 147, 160, 200, 200, 200, 200],
@@ -33,7 +30,6 @@ FIXED_COSTS = {
     "Fuel":        [317, 260, 200, 366, 200, 200, 260, 200, 200, 353, 244],
     "Pump":        [400, 0, 0, 550, 234, 234, 600, 341, 366, 400, 705],
 }
-
 DEFAULT_MARGINS = {
     "C5": 0.13, "C10": 0.13, "C15": 0.10, "C20": 0.13, "C25": 0.13,
     "C30": 0.13, "C35": 0.13, "C40": 0.11, "C45": 0.13, "C50": 0.13, "C60": 0.13,
@@ -247,8 +243,21 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Cancelled. Type /start to begin again.")
     return ConversationHandler.END
 
-def build_app():
+async def webhook_handler(request):
+    ptb_app = request.app["ptb_app"]
+    data = await request.json()
+    update = Update.de_json(data, ptb_app.bot)
+    await ptb_app.process_update(update)
+    return web.Response(text="ok")
+
+async def health(request):
+    return web.Response(text="ok")
+
+async def main():
     BOT_TOKEN = os.environ["BOT_TOKEN"]
+    WEBHOOK_URL = os.environ["WEBHOOK_URL"]
+    PORT = int(os.environ.get("PORT", 10000))
+
     ptb_app = Application.builder().token(BOT_TOKEN).build()
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
@@ -264,43 +273,24 @@ def build_app():
         per_message=False,
     )
     ptb_app.add_handler(conv)
-    return ptb_app
 
-async def webhook_handler(request):
-    ptb_app = request.app["ptb_app"]
-    data = await request.json()
-    update = Update.de_json(data, ptb_app.bot)
-    await ptb_app.process_update(update)
-    return web.Response(text="ok")
-
-async def health(request):
-    return web.Response(text="ok")
-
-async def on_startup(app):
-    ptb_app = app["ptb_app"]
-    WEBHOOK_URL = os.environ["WEBHOOK_URL"]
     await ptb_app.initialize()
     await ptb_app.start()
     await ptb_app.bot.set_webhook(f"{WEBHOOK_URL}/webhook")
-    logging.info("Webhook set and bot started")
-
-async def on_cleanup(app):
-    ptb_app = app["ptb_app"]
-    await ptb_app.stop()
-    await ptb_app.shutdown()
-
-def main():
-    PORT = int(os.environ.get("PORT", 8443))
-    ptb_app = build_app()
+    logging.info("✅ Webhook set and bot started")
 
     app = web.Application()
     app["ptb_app"] = ptb_app
-    app.on_startup.append(on_startup)
-    app.on_cleanup.append(on_cleanup)
     app.router.add_post("/webhook", webhook_handler)
     app.router.add_get("/", health)
 
-    web.run_app(app, host="0.0.0.0", port=PORT)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    logging.info(f"✅ Server listening on port {PORT}")
+
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
