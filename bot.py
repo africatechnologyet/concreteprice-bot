@@ -127,7 +127,7 @@ def get_uc(context): return context.user_data.get("unit_costs", dict(DEFAULT_UNI
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    text = "Concrete Sales Price Calculator\n\nWelcome! I calculate sale prices for concrete grades C5-C60.\nAll prices are in ETB per m3.\n\nWhat would you like to do?"
+    text = "Concrete Sales Price Calculator\n\nWelcome! Grades C5-C60, prices in ETB per m3.\n\nWhat would you like to do?"
     if update.message:
         await update.message.reply_text(text, reply_markup=main_menu_keyboard())
     else:
@@ -152,7 +152,7 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SELECT_COST_MATERIAL
     elif d == "menu_reset":
         context.user_data["unit_costs"] = dict(DEFAULT_UNIT_COSTS)
-        await q.edit_message_text("Unit costs reset to original values.\n\nWhat would you like to do?", reply_markup=main_menu_keyboard())
+        await q.edit_message_text("Unit costs reset.\n\nWhat would you like to do?", reply_markup=main_menu_keyboard())
         return MAIN_MENU
     elif d == "goto_main":
         return await start(update, context)
@@ -225,7 +225,7 @@ async def enter_cost_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ENTER_COST_VALUE
     uc = get_uc(context); old = uc[material]; uc[material] = new_cost
     context.user_data["unit_costs"] = uc
-    await update.message.reply_text(material + " updated\nETB " + str(old) + " to ETB " + str(new_cost) + "\n\nWhat next?", reply_markup=main_menu_keyboard())
+    await update.message.reply_text(material + " updated: ETB " + str(old) + " to ETB " + str(new_cost), reply_markup=main_menu_keyboard())
     return MAIN_MENU
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -242,12 +242,12 @@ async def webhook_handler(request):
 async def health(request):
     return web.Response(text="ok")
 
-async def main():
+def main():
     BOT_TOKEN = os.environ["BOT_TOKEN"]
     WEBHOOK_URL = os.environ["WEBHOOK_URL"]
     PORT = int(os.environ.get("PORT", 10000))
 
-    logging.info("Starting bot on port " + str(PORT))
+    logging.info("Starting on port " + str(PORT))
 
     ptb_app = Application.builder().token(BOT_TOKEN).build()
     conv = ConversationHandler(
@@ -265,25 +265,25 @@ async def main():
     )
     ptb_app.add_handler(conv)
 
-    await ptb_app.initialize()
-    await ptb_app.start()
-    await ptb_app.bot.set_webhook(WEBHOOK_URL + "/webhook")
-    logging.info("Webhook set to " + WEBHOOK_URL + "/webhook")
+    async def on_startup(aio_app):
+        await ptb_app.initialize()
+        await ptb_app.start()
+        await ptb_app.bot.set_webhook(WEBHOOK_URL + "/webhook")
+        logging.info("Webhook set OK")
+
+    async def on_cleanup(aio_app):
+        await ptb_app.stop()
+        await ptb_app.shutdown()
 
     aio_app = web.Application()
     aio_app["ptb_app"] = ptb_app
+    aio_app.on_startup.append(on_startup)
+    aio_app.on_cleanup.append(on_cleanup)
     aio_app.router.add_post("/webhook", webhook_handler)
     aio_app.router.add_get("/", health)
     aio_app.router.add_get("/health", health)
 
-    runner = web.AppRunner(aio_app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-    logging.info("Server listening on port " + str(PORT))
-
-    await asyncio.Event().wait()
+    web.run_app(aio_app, host="0.0.0.0", port=PORT)
 
 if __name__ == "__main__":
-    asyncio.run(main())
-# force redeploy
+    main()
